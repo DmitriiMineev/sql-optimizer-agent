@@ -1,0 +1,404 @@
+{
+  "name": "SQL Optimizer",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.deepseek.com/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "deepSeekApi",
+        "sendHeaders": true,
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n\"model\": \"deepseek-chat\",\n\"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": {{ $json.deepseek_prompt.toJsonString() }}\n    },\n    {\n      \"role\": \"user\",\n      \"content\": {{ $json.message.text.toJsonString() }}\n    }\n],\n\"temperature\": 0.1\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        240,
+        0
+      ],
+      "id": "2fb4407e-1679-4620-b2f2-dc94ad3c075b",
+      "name": "Request to DeepSeek",
+      "credentials": {
+        "deepSeekApi": {
+          "id": "jHy8FfiXH0fHxbsj",
+          "name": "DeepSeek account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6ac3abf0-3c29-4fae-ab50-5b9dba61f76b",
+              "name": "deepseek_prompt",
+              "value": "Ты — эксперт по PostgreSQL.  Пользователь будет отправлять тебе SQL запрос к базе данных.  Если код синтаксически некорректный, то исправь его и верни ИСПРАВЛЕННЫЙ и ОПТИМИЗИРОВАННЫЙ ЭФФЕКТИВНЫЙ код.  Если код верный, то верни ОПТИМИЗИРОВАННЫЙ ЭФФЕКТИВНЫЙ SQL код.  ВОЗВРАЩАЙ ТОЛЬКО КОД.  Сама база данных создается скриптом:  -- Создание таблицы для клиентов  create table if not exists client(     -- Айди клиента     client_id serial primary key     -- ФИО     , first_name varchar not null     , middle_name varchar     , last_name varchar not null     -- Паспортные данные     , birthday date not null     , passport_series varchar(4) not null check (passport_series ~ '^\\d{4}$')     , passport_number varchar(6) not null check (passport_number ~ '^\\d{6}$')     , date_of_issue date not null     , issuing_authority varchar not null     , unit_code varchar(7) not null check (unit_code ~ '^\\d{3}-\\d{3}$')     , birth_place varchar not null     , gender varchar(1) not null check (gender in ('M', 'F'))     -- Email и телефон     , email varchar not null     , phone_number varchar not null     -- Проверки корректности данных     , constraint unique_passport         unique (passport_series, passport_number) -- Уникальность паспорта     , constraint unique_email         unique (email) -- Уникальность email     , constraint unique_phone_number         unique (phone_number) -- Уникальность номера телефона     , constraint valid_email         check (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$') -- Валидность email     , constraint valid_phone         check (phone_number ~ '^(\\+7\n8)\\d{10}$') -- Валидность номера телефона );  comment on table client is 'Таблица клиентов банка';  -- Словарик для типов счетов  create table if not exists dic_financial_account_type(     -- Кодовое назвавние типа счета     financial_account_type_cd varchar primary key      -- Описание типа счета     , financial_account_type_desc varchar );  comment on table dic_financial_account_type is 'Словарик типов счетов';  insert into dic_financial_account_type values     ('DEP', 'Депозит')     , ('SAV', 'Накопительный счет');  -- Создаем табличку с счетами (постоянная информация)  create table if not exists financial_account(     -- Айди счета     account_id serial primary key     -- Связь с клиентом     , client_id integer not null     -- Тип счета     , financial_account_type_cd varchar(3) not null references dic_financial_account_type(financial_account_type_cd)     -- Дата открытия     , open_dt date not null     -- Валюта     , currency varchar(3) not null default 'RUB'     -- Проверки корректности данных     , constraint fk_account_client         foreign key (client_id)         references client(client_id)         on delete restrict -- Не даем удалить клиента со счетами         on update cascade -- Если меняется client_id - меняется и тут тоже     , constraint fk_account_type         foreign key (financial_account_type_cd)         references dic_financial_account_type(financial_account_type_cd)         on update cascade -- Меняется название типа счета в словаре - меняем и тут         on delete restrict -- Не даем удалить из словаря описания типов счетов, которые есть );  comment on table financial_account is 'Таблица с постоянной информацией о счетах';  create index idx_account_client on financial_account(client_id);  -- Создаем табличку с счетами (ставки и статусы)  create table if not exists financial_account_status(     -- Айди счета     account_id int not null     -- Баланс счета в рублях     , balance_amt_rub numeric not null     -- Ставка     , interest_rate numeric not null     -- Статус счета     , account_status_cd varchar(3) not null check (account_status_cd in ('ACT', 'CLO'))     --Время начала действия версии     , valid_from_dt date not null     -- Время окончания действия версии     , valid_to_dt date default '5999-01-01'::date     -- Проверки корректности данных     , constraint primary_key_create         primary key (account_id, valid_from_dt)     , constraint fk_account_status         foreign key (account_id)         references financial_account(account_id)         on delete restrict -- Не даем удалить счет с статусами         on update cascade -- Если меняется account_id - меняется и тут тоже     , constraint chk_dates check (valid_from_dt <= valid_to_dt) -- корректность дат );  comment on table financial_account_status is 'Таблица с изменяющейся информацией о счетах';  create index idx_status_account on financial_account_status(valid_to_dt);  create table if not exists dic_financial_transaction_type(     -- Кодовое назвавние типа транзакции     financial_transaction_type_cd varchar primary key     -- Описание типа транзакции     , financial_transaction_type_desc varchar );  comment on table dic_financial_transaction_type is 'Словарик для типов транзакций';  insert into dic_financial_transaction_type values     ('PAY', 'Пополнение')     , ('DIN', 'Зачисление процентов')     , ('DTT', 'Снятие');  create table if not exists financial_transaction(     -- Айдишник транзакции     transaction_id serial primary key     -- Связь с счетом     , account_id integer not null     -- Дата операции     , transaction_dt date not null     --Сумма операции в рублях     , transaction_amt_rub numeric not null     -- Баланс счета после операции в рублях     , balance_after_amt_rub numeric not null     -- Тип операции     , financial_transaction_type_cd varchar not null references dic_financial_transaction_type(financial_transaction_type_cd)     --Проверки корректности данных     , constraint fk_account_transaction         foreign key (account_id)         references financial_account(account_id)         on delete restrict -- Не даем удалить счет с транзакциями         on update cascade -- Если меняется account_id - меняется и тут тоже     , constraint fk_transaction_type         foreign key (financial_transaction_type_cd)         references dic_financial_transaction_type(financial_transaction_type_cd)         on update cascade -- Меняется тип транзакции - меняется и тут         on delete restrict -- Не даем удалить тип транзакции );  comment on table financial_transaction is 'Таблица с транзакциями';  create index idx_transaction_dt on financial_transaction(transaction_dt);",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        48,
+        0
+      ],
+      "id": "3a91fe70-634c-43c0-9c63-f07f800059b7",
+      "name": "Prompt for DeepSeek"
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -144,
+        0
+      ],
+      "id": "b644ce39-1504-4dd4-9c4c-aa92561bfebd",
+      "name": "Message from user",
+      "webhookId": "b62d61ce-c2ea-4539-a9cf-b9e7bbe2e4cb",
+      "credentials": {
+        "telegramApi": {
+          "id": "b85JYL1a6Q6C0REB",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Message from user').item.json.message.chat.id }}",
+        "text": "={{ $('Request to DeepSeek').item.json.choices[0].message.content }}",
+        "additionalFields": {
+          "parse_mode": "MarkdownV2"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1008,
+        0
+      ],
+      "id": "af3fcf57-dd73-4d99-83f0-a53ef7717005",
+      "name": "Sending optimized SQL",
+      "webhookId": "ac0b0739-8fc8-4438-810d-ed9cdccbd58e",
+      "credentials": {
+        "telegramApi": {
+          "id": "b85JYL1a6Q6C0REB",
+          "name": "Telegram account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "18U_3B_ylQ8Jwtup1nc-ORYMJajiG2dCf9mUYHRe1dwU",
+          "mode": "list",
+          "cachedResultName": "SQL Optimizer logs",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/18U_3B_ylQ8Jwtup1nc-ORYMJajiG2dCf9mUYHRe1dwU/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Лист1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/18U_3B_ylQ8Jwtup1nc-ORYMJajiG2dCf9mUYHRe1dwU/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $now }}",
+            "Chat ID": "={{ $('Message from user').item.json.message.chat.id }}",
+            "Original SQL": "={{ $('Message from user').item.json.message.text }}",
+            "Model": "={{ $('Request to DeepSeek').item.json.model }}",
+            "Optimized SQL": "={{ $('Request to DeepSeek').item.json.choices[0].message.content }}",
+            "Judge_Valid": "={{ $('Get valid and score').item.json.Judge_Valid }}",
+            "Judge_Score": "={{ $('Get valid and score').item.json.Judge_Score }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Timestamp",
+              "displayName": "Timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Chat ID",
+              "displayName": "Chat ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Original SQL",
+              "displayName": "Original SQL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Optimized SQL",
+              "displayName": "Optimized SQL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Model",
+              "displayName": "Model",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Judge_Valid",
+              "displayName": "Judge_Valid",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Judge_Score",
+              "displayName": "Judge_Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1200,
+        0
+      ],
+      "id": "02a6fa1c-22ec-48a7-8087-e0a935238079",
+      "name": "Logging",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "bwJtMLwWDfb4n9ic",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "e2b5a700-ca91-4a04-8f37-f95ffc6c4357",
+              "name": "promt_judge",
+              "value": "Ты — строгий судья по SQL. Твоя задача — оценить качество оптимизированного кода.\\n\\nТребования:\\n1. Синтаксис должен быть валидным.\\n2. Запрос должен быть оптимизирован (убраны лишние поля/условия, если это возможно).\\n\\nПроанализируй код ниже.\\n\\nВЕРНИ ТОЛЬКО JSON:\\n{\\n  \\\"valid\\\": true/false,\\n  \\\"score\\\": 1-10\\n}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        432,
+        0
+      ],
+      "id": "e751cd75-bd2f-424a-a1ba-d4546c308a68",
+      "name": "Prompt for judge"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3aaffe50-d9e4-4929-9964-9242b8c9ad01",
+              "name": "Judge_Valid",
+              "value": "={{ $json.choices[0].message.content.match(/\"valid\":\\s*(\\w+)/)[1] }}",
+              "type": "string"
+            },
+            {
+              "id": "294289fd-f0bb-4b0d-aa4f-d00e5bae43ef",
+              "name": "Judge_Score",
+              "value": "={{ $json.choices[0].message.content.match(/\"score\":\\s*(\\d+)/)[1] }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        816,
+        0
+      ],
+      "id": "81dc49d2-06eb-471b-ad8e-50b9e06ddfca",
+      "name": "Get valid and score"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.deepseek.com/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "deepSeekApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n\"model\": \"deepseek-chat\",\n\"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": {{ $json.promt_judge.toJsonString() }}\n    },\n    {\n      \"role\": \"user\",\n      \"content\": {{ $json.choices[0].message.content.toJsonString() }}\n    }\n],\n\"temperature\": 0.2\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        624,
+        0
+      ],
+      "id": "b75f8a41-f1a8-42eb-a564-fce69c5640c7",
+      "name": "Request to judge",
+      "credentials": {
+        "deepSeekApi": {
+          "id": "jHy8FfiXH0fHxbsj",
+          "name": "DeepSeek account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Request to DeepSeek": {
+      "main": [
+        [
+          {
+            "node": "Prompt for judge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt for DeepSeek": {
+      "main": [
+        [
+          {
+            "node": "Request to DeepSeek",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message from user": {
+      "main": [
+        [
+          {
+            "node": "Prompt for DeepSeek",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Logging": {
+      "main": [
+        []
+      ]
+    },
+    "Sending optimized SQL": {
+      "main": [
+        [
+          {
+            "node": "Logging",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prompt for judge": {
+      "main": [
+        [
+          {
+            "node": "Request to judge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get valid and score": {
+      "main": [
+        [
+          {
+            "node": "Sending optimized SQL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Request to judge": {
+      "main": [
+        [
+          {
+            "node": "Get valid and score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "d3c059d1-18ff-4d28-941d-b9734bf81ab8",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "503c82820cb1ec01df677b273121e8e3798753361fdb07d37862942a92c7834a"
+  },
+  "id": "pTjnb9wqT3zGj4qv",
+  "tags": []
+}
