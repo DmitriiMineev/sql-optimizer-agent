@@ -1,4 +1,4 @@
-# SQL Agent Optimizer (Telegram + n8n)
+# SQL Agent Optimizer (Telegram + DeepSeek + n8n)
 
 ## Проблема и Решение
 
