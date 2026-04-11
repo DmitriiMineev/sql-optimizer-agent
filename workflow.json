@@ -8,6 +8,11 @@
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "deepSeekApi",
         "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {}
+          ]
+        },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n\"model\": \"deepseek-chat\",\n\"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": {{ $json.deepseek_prompt.toJsonString() }}\n    },\n    {\n      \"role\": \"user\",\n      \"content\": {{ $json.message.text.toJsonString() }}\n    }\n],\n\"temperature\": 0.1\n}",
@@ -36,7 +41,7 @@
             {
               "id": "6ac3abf0-3c29-4fae-ab50-5b9dba61f76b",
               "name": "deepseek_prompt",
-              "value": "Ты — эксперт по PostgreSQL.  Пользователь будет отправлять тебе SQL запрос к базе данных.  Если код синтаксически некорректный, то исправь его и верни ИСПРАВЛЕННЫЙ и ОПТИМИЗИРОВАННЫЙ ЭФФЕКТИВНЫЙ код.  Если код верный, то верни ОПТИМИЗИРОВАННЫЙ ЭФФЕКТИВНЫЙ SQL код.  ВОЗВРАЩАЙ ТОЛЬКО КОД.  Сама база данных создается скриптом:  -- Создание таблицы для клиентов  create table if not exists client(     -- Айди клиента     client_id serial primary key     -- ФИО     , first_name varchar not null     , middle_name varchar     , last_name varchar not null     -- Паспортные данные     , birthday date not null     , passport_series varchar(4) not null check (passport_series ~ '^\\d{4}$')     , passport_number varchar(6) not null check (passport_number ~ '^\\d{6}$')     , date_of_issue date not null     , issuing_authority varchar not null     , unit_code varchar(7) not null check (unit_code ~ '^\\d{3}-\\d{3}$')     , birth_place varchar not null     , gender varchar(1) not null check (gender in ('M', 'F'))     -- Email и телефон     , email varchar not null     , phone_number varchar not null     -- Проверки корректности данных     , constraint unique_passport         unique (passport_series, passport_number) -- Уникальность паспорта     , constraint unique_email         unique (email) -- Уникальность email     , constraint unique_phone_number         unique (phone_number) -- Уникальность номера телефона     , constraint valid_email         check (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$') -- Валидность email     , constraint valid_phone         check (phone_number ~ '^(\\+7\n8)\\d{10}$') -- Валидность номера телефона );  comment on table client is 'Таблица клиентов банка';  -- Словарик для типов счетов  create table if not exists dic_financial_account_type(     -- Кодовое назвавние типа счета     financial_account_type_cd varchar primary key      -- Описание типа счета     , financial_account_type_desc varchar );  comment on table dic_financial_account_type is 'Словарик типов счетов';  insert into dic_financial_account_type values     ('DEP', 'Депозит')     , ('SAV', 'Накопительный счет');  -- Создаем табличку с счетами (постоянная информация)  create table if not exists financial_account(     -- Айди счета     account_id serial primary key     -- Связь с клиентом     , client_id integer not null     -- Тип счета     , financial_account_type_cd varchar(3) not null references dic_financial_account_type(financial_account_type_cd)     -- Дата открытия     , open_dt date not null     -- Валюта     , currency varchar(3) not null default 'RUB'     -- Проверки корректности данных     , constraint fk_account_client         foreign key (client_id)         references client(client_id)         on delete restrict -- Не даем удалить клиента со счетами         on update cascade -- Если меняется client_id - меняется и тут тоже     , constraint fk_account_type         foreign key (financial_account_type_cd)         references dic_financial_account_type(financial_account_type_cd)         on update cascade -- Меняется название типа счета в словаре - меняем и тут         on delete restrict -- Не даем удалить из словаря описания типов счетов, которые есть );  comment on table financial_account is 'Таблица с постоянной информацией о счетах';  create index idx_account_client on financial_account(client_id);  -- Создаем табличку с счетами (ставки и статусы)  create table if not exists financial_account_status(     -- Айди счета     account_id int not null     -- Баланс счета в рублях     , balance_amt_rub numeric not null     -- Ставка     , interest_rate numeric not null     -- Статус счета     , account_status_cd varchar(3) not null check (account_status_cd in ('ACT', 'CLO'))     --Время начала действия версии     , valid_from_dt date not null     -- Время окончания действия версии     , valid_to_dt date default '5999-01-01'::date     -- Проверки корректности данных     , constraint primary_key_create         primary key (account_id, valid_from_dt)     , constraint fk_account_status         foreign key (account_id)         references financial_account(account_id)         on delete restrict -- Не даем удалить счет с статусами         on update cascade -- Если меняется account_id - меняется и тут тоже     , constraint chk_dates check (valid_from_dt <= valid_to_dt) -- корректность дат );  comment on table financial_account_status is 'Таблица с изменяющейся информацией о счетах';  create index idx_status_account on financial_account_status(valid_to_dt);  create table if not exists dic_financial_transaction_type(     -- Кодовое назвавние типа транзакции     financial_transaction_type_cd varchar primary key     -- Описание типа транзакции     , financial_transaction_type_desc varchar );  comment on table dic_financial_transaction_type is 'Словарик для типов транзакций';  insert into dic_financial_transaction_type values     ('PAY', 'Пополнение')     , ('DIN', 'Зачисление процентов')     , ('DTT', 'Снятие');  create table if not exists financial_transaction(     -- Айдишник транзакции     transaction_id serial primary key     -- Связь с счетом     , account_id integer not null     -- Дата операции     , transaction_dt date not null     --Сумма операции в рублях     , transaction_amt_rub numeric not null     -- Баланс счета после операции в рублях     , balance_after_amt_rub numeric not null     -- Тип операции     , financial_transaction_type_cd varchar not null references dic_financial_transaction_type(financial_transaction_type_cd)     --Проверки корректности данных     , constraint fk_account_transaction         foreign key (account_id)         references financial_account(account_id)         on delete restrict -- Не даем удалить счет с транзакциями         on update cascade -- Если меняется account_id - меняется и тут тоже     , constraint fk_transaction_type         foreign key (financial_transaction_type_cd)         references dic_financial_transaction_type(financial_transaction_type_cd)         on update cascade -- Меняется тип транзакции - меняется и тут         on delete restrict -- Не даем удалить тип транзакции );  comment on table financial_transaction is 'Таблица с транзакциями';  create index idx_transaction_dt on financial_transaction(transaction_dt);",
+              "value": "Ты — эксперт по PostgreSQL.  Пользователь будет отправлять тебе SQL запрос к базе данных.  Если код синтаксически некорректный, то исправь его и верни ИСПРАВЛЕННЫЙ и ОПТИМИЗИРОВАННЫЙ ЭФФЕКТИВНЫЙ код.  Если код верный, то верни ОПТИМИЗИРОВАННЫЙ ЭФФЕКТИВНЫЙ SQL код.  ВОЗВРАЩАЙ ТОЛЬКО КОД В MARKDOWN ОФОРМЛЕНИИ.  Сама база данных создается скриптом:  -- Создание таблицы для клиентов  create table if not exists client(     -- Айди клиента     client_id serial primary key     -- ФИО     , first_name varchar not null     , middle_name varchar     , last_name varchar not null     -- Паспортные данные     , birthday date not null     , passport_series varchar(4) not null check (passport_series ~ '^\\d{4}$')     , passport_number varchar(6) not null check (passport_number ~ '^\\d{6}$')     , date_of_issue date not null     , issuing_authority varchar not null     , unit_code varchar(7) not null check (unit_code ~ '^\\d{3}-\\d{3}$')     , birth_place varchar not null     , gender varchar(1) not null check (gender in ('M', 'F'))     -- Email и телефон     , email varchar not null     , phone_number varchar not null     -- Проверки корректности данных     , constraint unique_passport         unique (passport_series, passport_number) -- Уникальность паспорта     , constraint unique_email         unique (email) -- Уникальность email     , constraint unique_phone_number         unique (phone_number) -- Уникальность номера телефона     , constraint valid_email         check (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$') -- Валидность email     , constraint valid_phone         check (phone_number ~ '^(\\+7\n8)\\d{10}$') -- Валидность номера телефона );  comment on table client is 'Таблица клиентов банка';  -- Словарик для типов счетов  create table if not exists dic_financial_account_type(     -- Кодовое назвавние типа счета     financial_account_type_cd varchar primary key      -- Описание типа счета     , financial_account_type_desc varchar );  comment on table dic_financial_account_type is 'Словарик типов счетов';  insert into dic_financial_account_type values     ('DEP', 'Депозит')     , ('SAV', 'Накопительный счет');  -- Создаем табличку с счетами (постоянная информация)  create table if not exists financial_account(     -- Айди счета     account_id serial primary key     -- Связь с клиентом     , client_id integer not null     -- Тип счета     , financial_account_type_cd varchar(3) not null references dic_financial_account_type(financial_account_type_cd)     -- Дата открытия     , open_dt date not null     -- Валюта     , currency varchar(3) not null default 'RUB'     -- Проверки корректности данных     , constraint fk_account_client         foreign key (client_id)         references client(client_id)         on delete restrict -- Не даем удалить клиента со счетами         on update cascade -- Если меняется client_id - меняется и тут тоже     , constraint fk_account_type         foreign key (financial_account_type_cd)         references dic_financial_account_type(financial_account_type_cd)         on update cascade -- Меняется название типа счета в словаре - меняем и тут         on delete restrict -- Не даем удалить из словаря описания типов счетов, которые есть );  comment on table financial_account is 'Таблица с постоянной информацией о счетах';  create index idx_account_client on financial_account(client_id);  -- Создаем табличку с счетами (ставки и статусы)  create table if not exists financial_account_status(     -- Айди счета     account_id int not null     -- Баланс счета в рублях     , balance_amt_rub numeric not null     -- Ставка     , interest_rate numeric not null     -- Статус счета     , account_status_cd varchar(3) not null check (account_status_cd in ('ACT', 'CLO'))     --Время начала действия версии     , valid_from_dt date not null     -- Время окончания действия версии     , valid_to_dt date default '5999-01-01'::date     -- Проверки корректности данных     , constraint primary_key_create         primary key (account_id, valid_from_dt)     , constraint fk_account_status         foreign key (account_id)         references financial_account(account_id)         on delete restrict -- Не даем удалить счет с статусами         on update cascade -- Если меняется account_id - меняется и тут тоже     , constraint chk_dates check (valid_from_dt <= valid_to_dt) -- корректность дат );  comment on table financial_account_status is 'Таблица с изменяющейся информацией о счетах';  create index idx_status_account on financial_account_status(valid_to_dt);  create table if not exists dic_financial_transaction_type(     -- Кодовое назвавние типа транзакции     financial_transaction_type_cd varchar primary key     -- Описание типа транзакции     , financial_transaction_type_desc varchar );  comment on table dic_financial_transaction_type is 'Словарик для типов транзакций';  insert into dic_financial_transaction_type values     ('PAY', 'Пополнение')     , ('DIN', 'Зачисление процентов')     , ('DTT', 'Снятие');  create table if not exists financial_transaction(     -- Айдишник транзакции     transaction_id serial primary key     -- Связь с счетом     , account_id integer not null     -- Дата операции     , transaction_dt date not null     --Сумма операции в рублях     , transaction_amt_rub numeric not null     -- Баланс счета после операции в рублях     , balance_after_amt_rub numeric not null     -- Тип операции     , financial_transaction_type_cd varchar not null references dic_financial_transaction_type(financial_transaction_type_cd)     --Проверки корректности данных     , constraint fk_account_transaction         foreign key (account_id)         references financial_account(account_id)         on delete restrict -- Не даем удалить счет с транзакциями         on update cascade -- Если меняется account_id - меняется и тут тоже     , constraint fk_transaction_type         foreign key (financial_transaction_type_cd)         references dic_financial_transaction_type(financial_transaction_type_cd)         on update cascade -- Меняется тип транзакции - меняется и тут         on delete restrict -- Не даем удалить тип транзакции );  comment on table financial_transaction is 'Таблица с транзакциями';  create index idx_transaction_dt on financial_transaction(transaction_dt);",
               "type": "string"
             }
           ]
@@ -63,8 +68,8 @@
       "type": "n8n-nodes-base.telegramTrigger",
       "typeVersion": 1.2,
       "position": [
-        -144,
-        0
+        -416,
+        144
       ],
       "id": "b644ce39-1504-4dd4-9c4c-aa92561bfebd",
       "name": "Message from user",
@@ -224,7 +229,7 @@
             {
               "id": "e2b5a700-ca91-4a04-8f37-f95ffc6c4357",
               "name": "promt_judge",
-              "value": "Ты — строгий судья по SQL. Твоя задача — оценить качество оптимизированного кода.\\n\\nТребования:\\n1. Синтаксис должен быть валидным.\\n2. Запрос должен быть оптимизирован (убраны лишние поля/условия, если это возможно).\\n\\nПроанализируй код ниже.\\n\\nВЕРНИ ТОЛЬКО JSON:\\n{\\n  \\\"valid\\\": true/false,\\n  \\\"score\\\": 1-10\\n}",
+              "value": "Ты — эксперт по оптимизации PostgreSQL. У тебя есть скрипт создания БД (схема, типы данных, индексы, связи). Тебе присылают SQL-запрос.  Проверь, что этот запрос вадидный (valid).  Оцени уровень его оптимизации по строгой системе из 10 критериев (каждый = 0 или 1 балл). Если критерий неактуален для запроса, то ставь за него 1. Итоговая оценка (score) — сумма от 0 до 10.  Критерии оценки:  1. Использует ли запрос индекс для поиска клиента (client_id, email, phone, passport)? 2. Если есть работа с financial_account_status — фильтрует ли по valid_to_dt = '5999-01-01' (текущая запись)? 3. Агрегации по транзакциям — используют ли индекс на transaction_dt или account_id+transaction_dt? 4. JOIN — идут ли по индексированным внешним ключам (client_id, account_id)? 5. Фильтрация по типам (DEP, PAY) — использует ли прямые коды, а не джойн со словарём? 6. Оконные функции — имеют ли PARTITION BY по account_id и ORDER BY по индексированному полю? 7. Фильтрация по датам (open_dt, transaction_dt) — использует ли индекс (open_dt индекса нет — учитывай это)? 8. Есть ли антипаттерн с суммированием всех транзакций для баланса вместо balance_after_amt_rub? 9. Использует ли плейсхолдеры ($1, $2) вместо литералов (для повторяющихся запросов)? 10. Предоставлен ли EXPLAIN (ANALYZE, BUFFERS) и нет ли в нём Seq Scan на больших таблицах?  ВЕРНИ ТОЛЬКО JSON:\\n{\\n  \\\"valid\\\": true/false,\\n  \\\"score\\\": 1-10\\n}  Сама база данных создается скриптом:  -- Создание таблицы для клиентов  create table if not exists client(     -- Айди клиента     client_id serial primary key     -- ФИО     , first_name varchar not null     , middle_name varchar     , last_name varchar not null     -- Паспортные данные     , birthday date not null     , passport_series varchar(4) not null check (passport_series ~ '^\\d{4}$')     , passport_number varchar(6) not null check (passport_number ~ '^\\d{6}$')     , date_of_issue date not null     , issuing_authority varchar not null     , unit_code varchar(7) not null check (unit_code ~ '^\\d{3}-\\d{3}$')     , birth_place varchar not null     , gender varchar(1) not null check (gender in ('M', 'F'))     -- Email и телефон     , email varchar not null     , phone_number varchar not null     -- Проверки корректности данных     , constraint unique_passport         unique (passport_series, passport_number) -- Уникальность паспорта     , constraint unique_email         unique (email) -- Уникальность email     , constraint unique_phone_number         unique (phone_number) -- Уникальность номера телефона     , constraint valid_email         check (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$') -- Валидность email     , constraint valid_phone         check (phone_number ~ '^(\\+7\n8)\\d{10}$') -- Валидность номера телефона );  comment on table client is 'Таблица клиентов банка';  -- Словарик для типов счетов  create table if not exists dic_financial_account_type(     -- Кодовое назвавние типа счета     financial_account_type_cd varchar primary key      -- Описание типа счета     , financial_account_type_desc varchar );  comment on table dic_financial_account_type is 'Словарик типов счетов';  insert into dic_financial_account_type values     ('DEP', 'Депозит')     , ('SAV', 'Накопительный счет');  -- Создаем табличку с счетами (постоянная информация)  create table if not exists financial_account(     -- Айди счета     account_id serial primary key     -- Связь с клиентом     , client_id integer not null     -- Тип счета     , financial_account_type_cd varchar(3) not null references dic_financial_account_type(financial_account_type_cd)     -- Дата открытия     , open_dt date not null     -- Валюта     , currency varchar(3) not null default 'RUB'     -- Проверки корректности данных     , constraint fk_account_client         foreign key (client_id)         references client(client_id)         on delete restrict -- Не даем удалить клиента со счетами         on update cascade -- Если меняется client_id - меняется и тут тоже     , constraint fk_account_type         foreign key (financial_account_type_cd)         references dic_financial_account_type(financial_account_type_cd)         on update cascade -- Меняется название типа счета в словаре - меняем и тут         on delete restrict -- Не даем удалить из словаря описания типов счетов, которые есть );  comment on table financial_account is 'Таблица с постоянной информацией о счетах';  create index idx_account_client on financial_account(client_id);  -- Создаем табличку с счетами (ставки и статусы)  create table if not exists financial_account_status(     -- Айди счета     account_id int not null     -- Баланс счета в рублях     , balance_amt_rub numeric not null     -- Ставка     , interest_rate numeric not null     -- Статус счета     , account_status_cd varchar(3) not null check (account_status_cd in ('ACT', 'CLO'))     --Время начала действия версии     , valid_from_dt date not null     -- Время окончания действия версии     , valid_to_dt date default '5999-01-01'::date     -- Проверки корректности данных     , constraint primary_key_create         primary key (account_id, valid_from_dt)     , constraint fk_account_status         foreign key (account_id)         references financial_account(account_id)         on delete restrict -- Не даем удалить счет с статусами         on update cascade -- Если меняется account_id - меняется и тут тоже     , constraint chk_dates check (valid_from_dt <= valid_to_dt) -- корректность дат );  comment on table financial_account_status is 'Таблица с изменяющейся информацией о счетах';  create index idx_status_account on financial_account_status(valid_to_dt);  create table if not exists dic_financial_transaction_type(     -- Кодовое назвавние типа транзакции     financial_transaction_type_cd varchar primary key     -- Описание типа транзакции     , financial_transaction_type_desc varchar );  comment on table dic_financial_transaction_type is 'Словарик для типов транзакций';  insert into dic_financial_transaction_type values     ('PAY', 'Пополнение')     , ('DIN', 'Зачисление процентов')     , ('DTT', 'Снятие');  create table if not exists financial_transaction(     -- Айдишник транзакции     transaction_id serial primary key     -- Связь с счетом     , account_id integer not null     -- Дата операции     , transaction_dt date not null     --Сумма операции в рублях     , transaction_amt_rub numeric not null     -- Баланс счета после операции в рублях     , balance_after_amt_rub numeric not null     -- Тип операции     , financial_transaction_type_cd varchar not null references dic_financial_transaction_type(financial_transaction_type_cd)     --Проверки корректности данных     , constraint fk_account_transaction         foreign key (account_id)         references financial_account(account_id)         on delete restrict -- Не даем удалить счет с транзакциями         on update cascade -- Если меняется account_id - меняется и тут тоже     , constraint fk_transaction_type         foreign key (financial_transaction_type_cd)         references dic_financial_transaction_type(financial_transaction_type_cd)         on update cascade -- Меняется тип транзакции - меняется и тут         on delete restrict -- Не даем удалить тип транзакции );  comment on table financial_transaction is 'Таблица с транзакциями';  create index idx_transaction_dt on financial_transaction(transaction_dt);  SQL скрипт:",
               "type": "string"
             }
           ]
@@ -302,6 +307,113 @@
         }
       },
       "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "/start",
+                    "operator": {
+                      "type": "string",
+                      "operation": "notEquals"
+                    },
+                    "id": "3978331f-ff32-4e90-b807-1c8517f20f35"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "bae53057-33d8-4d86-8273-1b3aae68126f",
+                    "leftValue": "={{ $json.message.text }}",
+                    "rightValue": "/start",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -208,
+        144
+      ],
+      "id": "0eb9c940-3d8d-4124-82c6-cdd0769a7ec2",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Message from user').item.json.message.chat.id }}",
+        "text": "={{ $json.message_for_user }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        288
+      ],
+      "id": "fcaeb617-79d3-4103-96b7-44365d46fc85",
+      "name": "Send a text message",
+      "webhookId": "346b6f63-0145-4b58-be84-28572039579b",
+      "credentials": {
+        "telegramApi": {
+          "id": "b85JYL1a6Q6C0REB",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fccba257-7765-4451-8010-853838b5401d",
+              "name": "message_for_user",
+              "value": "Привет! Это бот-оптимизатор SQL запросов к базе данных нашего банка. Отправь свой SQL запрос и бот оптимизирует его.",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        48,
+        288
+      ],
+      "id": "e95bc003-3dd2-4374-9a0c-f580bf72c14c",
+      "name": "Edit Fields"
     }
   ],
   "pinData": {},
@@ -332,7 +444,7 @@
       "main": [
         [
           {
-            "node": "Prompt for DeepSeek",
+            "node": "Switch",
             "type": "main",
             "index": 0
           }
@@ -387,14 +499,43 @@
           }
         ]
       ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Prompt for DeepSeek",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "d3c059d1-18ff-4d28-941d-b9734bf81ab8",
+  "versionId": "a0c151ab-d46e-4bd2-83f7-e84d40b9f7c1",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "503c82820cb1ec01df677b273121e8e3798753361fdb07d37862942a92c7834a"
